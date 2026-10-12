@@ -3,6 +3,19 @@ import { JSDOM } from "jsdom";
 
 const realSetTimeout = globalThis.setTimeout;
 
+export async function withMockTimers(t, run) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let settled = false;
+  const result = run();
+  result.then(() => { settled = true; }, () => { settled = true; });
+  for (let elapsed = 0; !settled && elapsed < 120_000; elapsed += 100) {
+    t.mock.timers.tick(100);
+    await new Promise(setImmediate);
+  }
+  if (!settled) throw new Error("Operation did not finish within two simulated minutes");
+  return result;
+}
+
 export const PREVIEW_OVERLAY_ID = "itmo-ics-preview-overlay";
 
 export const previewOverlay = () => document.getElementById(PREVIEW_OVERLAY_ID);

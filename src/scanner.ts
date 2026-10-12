@@ -18,16 +18,37 @@ function datesLabel(): string {
   return document.getElementById("dates")?.textContent?.trim() ?? "";
 }
 
-async function waitForMonthChange(prev: string, timeout = 3000): Promise<boolean> {
+async function waitForMonthChange(prev: string, timeout = 10_000): Promise<void> {
   const step = 100;
   for (let waited = 0; waited < timeout; waited += step) {
     await sleep(step);
-    if (datesLabel() !== prev) {
-      await sleep(150);
-      return true;
-    }
+    if (datesLabel() && datesLabel() !== prev) return;
   }
-  return false;
+  throw new Error("Не удалось переключить месяц расписания");
+}
+
+function calendarContent(): string | null {
+  return document.querySelector(".el-calendar-table")?.innerHTML ?? null;
+}
+
+async function readMonth(year: number, month: number, previous: string | null): Promise<LessonOccurrence[]> {
+  const step = 100;
+  let lastContent = calendarContent();
+  let stableFor = 0;
+  for (let waited = 0; waited < 10_000; waited += step) {
+    await sleep(step);
+    const content = calendarContent();
+    stableFor = content === lastContent ? stableFor + step : 0;
+    lastContent = content;
+    if (content === null || stableFor < 500 || content === previous) continue;
+
+    const lessons = scrapeMonth(year, month);
+    if (lessons.length > 0) return lessons;
+  }
+  if (lastContent === null || stableFor < 500) {
+    throw new Error("Не удалось дождаться загрузки расписания");
+  }
+  return scrapeMonth(year, month);
 }
 
 function scrapeMonth(year: number, month: number): LessonOccurrence[] {
@@ -54,39 +75,41 @@ function scrapeMonth(year: number, month: number): LessonOccurrence[] {
 
 export async function scanSemester(
   onProgress: (month: number) => void,
-  maxMonths = 10,
+  maxMonths = 5,
 ): Promise<ScanResult> {
-  findButtonByText("Сегодня")?.click();
-  await sleep(400);
-
   const anchor = new Date();
   let year = anchor.getFullYear();
   let month = anchor.getMonth();
 
   const collected: LessonOccurrence[] = [];
   let monthsScanned = 0;
+  let previousContent = calendarContent();
 
-  for (let i = 0; i < maxMonths; i++) {
-    const monthLessons = scrapeMonth(year, month);
-    monthsScanned++;
-    onProgress(monthsScanned);
-    collected.push(...monthLessons);
-    if (monthLessons.length === 0) break;
+  try {
+    findButtonByText("Сегодня")?.click();
+    for (let i = 0; i < maxMonths; i++) {
+      const monthLessons = await readMonth(year, month, previousContent);
+      monthsScanned++;
+      onProgress(monthsScanned);
+      collected.push(...monthLessons);
+      if (monthLessons.length === 0 || monthsScanned === maxMonths) break;
 
-    const prev = datesLabel();
-    const next = nextMonthButton();
-    if (!next) break;
-    next.click();
-    if (!(await waitForMonthChange(prev))) break;
+      const prev = datesLabel();
+      previousContent = calendarContent();
+      const next = nextMonthButton();
+      if (!next) throw new Error("Не найдена кнопка переключения месяца");
+      next.click();
+      await waitForMonthChange(prev);
 
-    month++;
-    if (month > 11) {
-      month = 0;
-      year++;
+      month++;
+      if (month > 11) {
+        month = 0;
+        year++;
+      }
     }
+  } finally {
+    findButtonByText("Сегодня")?.click();
   }
-
-  findButtonByText("Сегодня")?.click();
 
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);

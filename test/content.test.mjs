@@ -183,7 +183,7 @@ test("clicking export scans the schedule and downloads a valid .ics", async () =
   ensureButton();
   exportBtn().click();
 
-  await waitFor(() => previewOverlay());
+  await waitFor(() => previewOverlay(), { timeout: 15_000 });
   assert.ok(previewOverlay(), "a preview modal appeared after scanning");
   assert.match(previewOverlay().textContent, /Нашёл 2 занятий, 2 предметов/);
   assert.match(previewOverlay().textContent, /Просканировано: 3 мес\./);
@@ -224,7 +224,7 @@ test("cancelling the preview aborts the export without downloading", async () =>
   ensureButton();
   exportBtn().click();
 
-  await waitFor(() => previewOverlay());
+  await waitFor(() => previewOverlay(), { timeout: 15_000 });
   clickPreviewButton("Отмена");
 
   await waitFor(() => exportBtn().textContent === "Экспорт отменён");
@@ -260,7 +260,7 @@ test("on failure it logs DOM diagnostics to the console", async () => {
     ensureButton();
     exportBtn().click();
 
-    await waitFor(() => previewOverlay());
+    await waitFor(() => previewOverlay(), { timeout: 15_000 });
     clickPreviewButton("Скачать .ics");
 
     await waitFor(() => exportBtn().textContent === "Ошибка экспорта");

@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { loadBundle, installDom, FixedDate } from "./helpers.mjs";
+import { loadBundle, installDom, FixedDate, withMockTimers } from "./helpers.mjs";
 
 function dayCell(day, lesson) {
   const greyClass = lesson?.grey ? " text-gray-40" : "";
@@ -17,7 +17,7 @@ function dayCell(day, lesson) {
 
 // months: array of arrays of { day, name, time, grey? }. Index 0 is the month
 // shown after "Сегодня"; each "next" click advances to the following index.
-function buildCalendar(months) {
+function buildCalendar(months, { labelDelay = 0, lessonDelay = 0, todayDelay = 0, keepPrevious = false } = {}) {
   installDom(`<!doctype html><html><body>
     <div class="el-calendar-header-switch">
       <button class="btn-schedule">Сегодня</button>
@@ -31,21 +31,27 @@ function buildCalendar(months) {
   const dates = document.getElementById("dates");
   const state = { todayClicks: 0 };
 
-  const render = (idx) => {
+  const render = (idx, headingDelay = 0, contentDelay = 0) => {
     const month = months[idx] ?? [];
-    table.innerHTML = month.map((l) => dayCell(l.day, l)).join("");
-    dates.textContent = "M" + idx;
+    const content = () => { table.innerHTML = month.map((l) => dayCell(l.day, l)).join(""); };
+    const heading = () => { dates.textContent = "M" + idx; };
+    if (headingDelay) setTimeout(heading, headingDelay);
+    else heading();
+    if (contentDelay) {
+      if (!keepPrevious) table.innerHTML = "";
+      setTimeout(content, contentDelay);
+    } else content();
   };
 
   let idx = 0;
   document.querySelector("button.btn-schedule").addEventListener("click", () => {
     idx = 0;
     state.todayClicks++;
-    render(0);
+    render(0, todayDelay, todayDelay);
   });
   document.querySelector(".nav-next").addEventListener("click", () => {
     idx++;
-    render(idx);
+    render(idx, labelDelay, lessonDelay);
   });
 
   return state;
@@ -143,4 +149,76 @@ test("reports progress once per scanned month", async () => {
   await scanSemester((m) => seen.push(m));
 
   assert.deepEqual(seen, [1, 2, 3]);
+});
+
+test("waits for a month heading that takes longer than three seconds", async (t) => {
+  globalThis.Date = FixedDate;
+  buildCalendar([
+    [{ day: 16, name: "September", time: "10:00" }],
+    [{ day: 1, name: "October", time: "11:00" }],
+    [],
+  ], { labelDelay: 3500, lessonDelay: 3500 });
+
+  const result = await withMockTimers(t, () => scanSemester(() => {}));
+  assert.equal(result.monthsScanned, 3);
+  assert.deepEqual(result.occurrences.map((o) => [o.name, o.date.getMonth()]), [
+    ["September", 8], ["October", 9],
+  ]);
+});
+
+for (const keepPrevious of [false, true]) {
+  test(`waits for lessons after the heading changes (keep previous: ${keepPrevious})`, async (t) => {
+    globalThis.Date = FixedDate;
+    buildCalendar([
+      [{ day: 16, name: "September", time: "10:00" }],
+      [{ day: 1, name: "October", time: "11:00" }],
+      [],
+    ], { lessonDelay: 4500, keepPrevious });
+
+    const result = await withMockTimers(t, () => scanSemester(() => {}));
+    assert.equal(result.monthsScanned, 3);
+    assert.deepEqual(result.occurrences.map((o) => [o.name, o.date.getMonth()]), [
+      ["September", 8], ["October", 9],
+    ]);
+  });
+}
+
+test("waits for lessons after resetting to today", async (t) => {
+  globalThis.Date = FixedDate;
+  buildCalendar([[{ day: 16, name: "September", time: "10:00" }], []], { todayDelay: 2000 });
+  const result = await withMockTimers(t, () => scanSemester(() => {}));
+  assert.equal(result.occurrences.length, 1);
+  assert.equal(result.monthsScanned, 2);
+});
+
+test("rejects a stuck month transition and restores today instead of returning a partial scan", async (t) => {
+  globalThis.Date = FixedDate;
+  const state = buildCalendar([[{ day: 16, name: "September", time: "10:00" }]]);
+  const next = document.querySelector(".nav-next");
+  next.replaceWith(next.cloneNode(true)); // No navigation handler.
+
+  await assert.rejects(withMockTimers(t, () => scanSemester(() => {})), /месяц/i);
+  assert.equal(state.todayClicks, 2);
+});
+
+test("accepts identical lesson markup in consecutive months and respects the scan limit", async (t) => {
+  globalThis.Date = FixedDate;
+  const lesson = [{ day: 16, name: "Same lesson", time: "10:00" }];
+  buildCalendar([lesson, lesson]);
+  let nextClicks = 0;
+  document.querySelector(".nav-next").addEventListener("click", () => nextClicks++);
+
+  const result = await withMockTimers(t, () => scanSemester(() => {}, 2));
+  assert.deepEqual(result.occurrences.map((o) => o.date.getMonth()), [8, 9]);
+  assert.equal(result.monthsScanned, 2);
+  assert.equal(nextClicks, 1);
+});
+
+test("rejects a missing calendar rather than treating it as an empty month", async (t) => {
+  globalThis.Date = FixedDate;
+  const state = buildCalendar([[{ day: 16, name: "September", time: "10:00" }]]);
+  document.querySelector(".el-calendar-table").remove();
+
+  await assert.rejects(withMockTimers(t, () => scanSemester(() => {})), /загрузки/i);
+  assert.equal(state.todayClicks, 2);
 });
