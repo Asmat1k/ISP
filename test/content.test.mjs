@@ -106,7 +106,7 @@ test("injects the export button next to the Неделя/Месяц toggle", () 
   ensureButton();
   const btn = exportBtn();
   assert.ok(btn);
-  assert.equal(btn.textContent, "Экспорт в Google Calendar");
+  assert.equal(btn.textContent, "Экспорт");
   assert.match(btn.className, /btn-primary/);
   assert.equal(btn.parentElement, document.getElementById("btn-radios-1").parentElement);
 });
@@ -145,7 +145,7 @@ test("in month view the button is enabled and invites export", () => {
   ensureButton();
   const btn = exportBtn();
   assert.equal(btn.disabled, false);
-  assert.equal(btn.textContent, "Экспорт в Google Calendar");
+  assert.equal(btn.textContent, "Экспорт");
 });
 
 test("switching from week to month re-enables the button", () => {
@@ -156,7 +156,7 @@ test("switching from week to month re-enables the button", () => {
   setActiveView("month");
   ensureButton();
   assert.equal(exportBtn().disabled, false);
-  assert.equal(exportBtn().textContent, "Экспорт в Google Calendar");
+  assert.equal(exportBtn().textContent, "Экспорт");
 });
 
 test("clicking export scans the schedule and downloads a valid .ics", async () => {

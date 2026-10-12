@@ -3,7 +3,7 @@ import { scanSemester } from "./scanner";
 import { showPreview, summarize } from "./preview";
 
 const BUTTON_ID = "itmo-ics-export-btn";
-const EXPORT_LABEL = "Экспорт в Google Calendar";
+const EXPORT_LABEL = "Экспорт";
 const WEEK_VIEW_LABEL = "Доступно в виде «Месяц»";
 
 function isWeekView(): boolean {

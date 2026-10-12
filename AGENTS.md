@@ -31,7 +31,7 @@ Content script `src/content.ts` orchestrates the rest; the flow is
 scan → preview → build. Modules in `src/` (`types.ts` holds shared interfaces):
 
 - **[src/content.ts](src/content.ts)** — entry point declared in the manifest.
-  Injects the "Экспорт в Google Calendar" button next to the calendar's
+  Injects the "Экспорт" button next to the calendar's
   Week/Month toggle, re-adding it every 1s via `setInterval(ensureButton)`
   because the SPA re-renders. Disabled in Week view (export only works in Month
   view). On click: `scanSemester` → `showPreview(summarize(...))` → and only if
