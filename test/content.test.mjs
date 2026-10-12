@@ -28,7 +28,7 @@ function headerHtml(view = "month") {
         <label class="btn${active("month")}"><input type="radio" value="month"><span>Месяц</span></label>
       </div></div>
     </div>
-    <div class="wrapper"><div class="el-calendar-table"></div></div>
+    <div class="b-overlay-wrap" aria-busy="false"><div class="wrapper"><div class="el-calendar-table"></div></div></div>
   </body></html>`;
 }
 
@@ -44,7 +44,9 @@ function setActiveView(view) {
 function setupCalendar(months) {
   const table = document.querySelector(".el-calendar-table");
   const dates = document.getElementById("dates");
+  const overlay = table.closest(".b-overlay-wrap");
   const render = (i) => {
+    overlay.setAttribute("aria-busy", "true");
     const month = months[i] ?? [];
     table.innerHTML = month
       .map(
@@ -57,6 +59,7 @@ function setupCalendar(months) {
       )
       .join("");
     dates.textContent = "M" + i;
+    overlay.setAttribute("aria-busy", "false");
   };
   let idx = 0;
   document.querySelector("button.btn-schedule").addEventListener("click", () => {
@@ -183,7 +186,7 @@ test("clicking export scans the schedule and downloads a valid .ics", async () =
   ensureButton();
   exportBtn().click();
 
-  await waitFor(() => previewOverlay());
+  await waitFor(() => previewOverlay(), { timeout: 15_000 });
   assert.ok(previewOverlay(), "a preview modal appeared after scanning");
   assert.match(previewOverlay().textContent, /Нашёл 2 занятий, 2 предметов/);
   assert.match(previewOverlay().textContent, /Просканировано: 3 мес\./);
@@ -224,7 +227,7 @@ test("cancelling the preview aborts the export without downloading", async () =>
   ensureButton();
   exportBtn().click();
 
-  await waitFor(() => previewOverlay());
+  await waitFor(() => previewOverlay(), { timeout: 15_000 });
   clickPreviewButton("Отмена");
 
   await waitFor(() => exportBtn().textContent === "Экспорт отменён");
@@ -260,7 +263,7 @@ test("on failure it logs DOM diagnostics to the console", async () => {
     ensureButton();
     exportBtn().click();
 
-    await waitFor(() => previewOverlay());
+    await waitFor(() => previewOverlay(), { timeout: 15_000 });
     clickPreviewButton("Скачать .ics");
 
     await waitFor(() => exportBtn().textContent === "Ошибка экспорта");

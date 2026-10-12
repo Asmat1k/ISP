@@ -1,5 +1,6 @@
 import type { LessonOccurrence, ScanResult } from "./types";
-import { sleep } from "./utils";
+
+const CALENDAR_LOAD_TIMEOUT_MS = 30_000;
 
 function findButtonByText(text: string): HTMLElement | null {
   const buttons = document.querySelectorAll<HTMLElement>("button.btn-schedule");
@@ -18,16 +19,55 @@ function datesLabel(): string {
   return document.getElementById("dates")?.textContent?.trim() ?? "";
 }
 
-async function waitForMonthChange(prev: string, timeout = 3000): Promise<boolean> {
-  const step = 100;
-  for (let waited = 0; waited < timeout; waited += step) {
-    await sleep(step);
-    if (datesLabel() !== prev) {
-      await sleep(150);
-      return true;
+function waitForCalendar(action: () => void, previousMonth?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const initialMonth = datesLabel();
+    let loadingStarted = false;
+    const observer = new MutationObserver((records) => queueMicrotask(() => check(records)));
+    const timeout = setTimeout(() => {
+      observer.disconnect();
+      reject(new Error("Не удалось дождаться загрузки месяца расписания"));
+    }, CALENDAR_LOAD_TIMEOUT_MS);
+
+    function check(records: MutationRecord[] = []): void {
+      const header = document.querySelector(".el-calendar-header-switch");
+      const table = document.querySelector(".el-calendar-table");
+      if (!header || !table) return;
+
+      const overlays = [header, table].map((el) => el.closest(".b-overlay-wrap"));
+      const isLoading = overlays.some((el) => el?.getAttribute("aria-busy") === "true");
+      const tableOverlay = overlays[1];
+      loadingStarted ||= tableOverlay?.getAttribute("aria-busy") === "true" || records.some((record) =>
+        record.oldValue === "true" && record.target === tableOverlay,
+      );
+
+      const currentMonth = datesLabel();
+      if (!currentMonth || currentMonth === previousMonth || isLoading) return;
+      const changedMonth = previousMonth !== undefined || currentMonth !== initialMonth;
+      if (changedMonth && !loadingStarted) return;
+
+      observer.disconnect();
+      clearTimeout(timeout);
+      resolve();
     }
-  }
-  return false;
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["aria-busy"],
+      attributeOldValue: true,
+    });
+    try {
+      action();
+      queueMicrotask(check);
+    } catch (error) {
+      observer.disconnect();
+      clearTimeout(timeout);
+      reject(error);
+    }
+  });
 }
 
 function scrapeMonth(year: number, month: number): LessonOccurrence[] {
@@ -54,11 +94,8 @@ function scrapeMonth(year: number, month: number): LessonOccurrence[] {
 
 export async function scanSemester(
   onProgress: (month: number) => void,
-  maxMonths = 10,
+  maxMonths = 5,
 ): Promise<ScanResult> {
-  findButtonByText("Сегодня")?.click();
-  await sleep(400);
-
   const anchor = new Date();
   let year = anchor.getFullYear();
   let month = anchor.getMonth();
@@ -66,27 +103,29 @@ export async function scanSemester(
   const collected: LessonOccurrence[] = [];
   let monthsScanned = 0;
 
-  for (let i = 0; i < maxMonths; i++) {
-    const monthLessons = scrapeMonth(year, month);
-    monthsScanned++;
-    onProgress(monthsScanned);
-    collected.push(...monthLessons);
-    if (monthLessons.length === 0) break;
+  try {
+    await waitForCalendar(() => findButtonByText("Сегодня")?.click());
+    for (let i = 0; i < maxMonths; i++) {
+      const monthLessons = scrapeMonth(year, month);
+      monthsScanned++;
+      onProgress(monthsScanned);
+      collected.push(...monthLessons);
+      if (monthLessons.length === 0 || monthsScanned === maxMonths) break;
 
-    const prev = datesLabel();
-    const next = nextMonthButton();
-    if (!next) break;
-    next.click();
-    if (!(await waitForMonthChange(prev))) break;
+      const prev = datesLabel();
+      const next = nextMonthButton();
+      if (!next) throw new Error("Не найдена кнопка переключения месяца");
+      await waitForCalendar(() => next.click(), prev);
 
-    month++;
-    if (month > 11) {
-      month = 0;
-      year++;
+      month++;
+      if (month > 11) {
+        month = 0;
+        year++;
+      }
     }
+  } finally {
+    findButtonByText("Сегодня")?.click();
   }
-
-  findButtonByText("Сегодня")?.click();
 
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);

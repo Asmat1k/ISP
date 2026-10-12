@@ -1,6 +1,3 @@
-export const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, ms));
-
 export function hashKey(s: string): string {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
