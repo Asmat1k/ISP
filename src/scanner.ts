@@ -1,5 +1,6 @@
 import type { LessonOccurrence, ScanResult } from "./types";
-import { sleep } from "./utils";
+
+const CALENDAR_LOAD_TIMEOUT_MS = 30_000;
 
 function findButtonByText(text: string): HTMLElement | null {
   const buttons = document.querySelectorAll<HTMLElement>("button.btn-schedule");
@@ -18,37 +19,55 @@ function datesLabel(): string {
   return document.getElementById("dates")?.textContent?.trim() ?? "";
 }
 
-async function waitForMonthChange(prev: string, timeout = 10_000): Promise<void> {
-  const step = 100;
-  for (let waited = 0; waited < timeout; waited += step) {
-    await sleep(step);
-    if (datesLabel() && datesLabel() !== prev) return;
-  }
-  throw new Error("Не удалось переключить месяц расписания");
-}
+function waitForCalendar(action: () => void, previousMonth?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const initialMonth = datesLabel();
+    let loadingStarted = false;
+    const observer = new MutationObserver((records) => queueMicrotask(() => check(records)));
+    const timeout = setTimeout(() => {
+      observer.disconnect();
+      reject(new Error("Не удалось дождаться загрузки месяца расписания"));
+    }, CALENDAR_LOAD_TIMEOUT_MS);
 
-function calendarContent(): string | null {
-  return document.querySelector(".el-calendar-table")?.innerHTML ?? null;
-}
+    function check(records: MutationRecord[] = []): void {
+      const header = document.querySelector(".el-calendar-header-switch");
+      const table = document.querySelector(".el-calendar-table");
+      if (!header || !table) return;
 
-async function readMonth(year: number, month: number, previous: string | null): Promise<LessonOccurrence[]> {
-  const step = 100;
-  let lastContent = calendarContent();
-  let stableFor = 0;
-  for (let waited = 0; waited < 10_000; waited += step) {
-    await sleep(step);
-    const content = calendarContent();
-    stableFor = content === lastContent ? stableFor + step : 0;
-    lastContent = content;
-    if (content === null || stableFor < 500 || content === previous) continue;
+      const overlays = [header, table].map((el) => el.closest(".b-overlay-wrap"));
+      const isLoading = overlays.some((el) => el?.getAttribute("aria-busy") === "true");
+      const tableOverlay = overlays[1];
+      loadingStarted ||= tableOverlay?.getAttribute("aria-busy") === "true" || records.some((record) =>
+        record.oldValue === "true" && record.target === tableOverlay,
+      );
 
-    const lessons = scrapeMonth(year, month);
-    if (lessons.length > 0) return lessons;
-  }
-  if (lastContent === null || stableFor < 500) {
-    throw new Error("Не удалось дождаться загрузки расписания");
-  }
-  return scrapeMonth(year, month);
+      const currentMonth = datesLabel();
+      if (!currentMonth || currentMonth === previousMonth || isLoading) return;
+      const changedMonth = previousMonth !== undefined || currentMonth !== initialMonth;
+      if (changedMonth && !loadingStarted) return;
+
+      observer.disconnect();
+      clearTimeout(timeout);
+      resolve();
+    }
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["aria-busy"],
+      attributeOldValue: true,
+    });
+    try {
+      action();
+      queueMicrotask(check);
+    } catch (error) {
+      observer.disconnect();
+      clearTimeout(timeout);
+      reject(error);
+    }
+  });
 }
 
 function scrapeMonth(year: number, month: number): LessonOccurrence[] {
@@ -83,23 +102,20 @@ export async function scanSemester(
 
   const collected: LessonOccurrence[] = [];
   let monthsScanned = 0;
-  let previousContent = calendarContent();
 
   try {
-    findButtonByText("Сегодня")?.click();
+    await waitForCalendar(() => findButtonByText("Сегодня")?.click());
     for (let i = 0; i < maxMonths; i++) {
-      const monthLessons = await readMonth(year, month, previousContent);
+      const monthLessons = scrapeMonth(year, month);
       monthsScanned++;
       onProgress(monthsScanned);
       collected.push(...monthLessons);
       if (monthLessons.length === 0 || monthsScanned === maxMonths) break;
 
       const prev = datesLabel();
-      previousContent = calendarContent();
       const next = nextMonthButton();
       if (!next) throw new Error("Не найдена кнопка переключения месяца");
-      next.click();
-      await waitForMonthChange(prev);
+      await waitForCalendar(() => next.click(), prev);
 
       month++;
       if (month > 11) {

@@ -15,26 +15,34 @@ function dayCell(day, lesson) {
     </div></div>`;
 }
 
-// months: array of arrays of { day, name, time, grey? }. Index 0 is the month
-// shown after "Сегодня"; each "next" click advances to the following index.
 function buildCalendar(months, { labelDelay = 0, lessonDelay = 0, todayDelay = 0, keepPrevious = false } = {}) {
   installDom(`<!doctype html><html><body>
-    <div class="el-calendar-header-switch">
+    <div class="b-overlay-wrap" aria-busy="false"><div class="el-calendar-header-switch">
       <button class="btn-schedule">Сегодня</button>
       <a id="dates">init</a>
       <button class="nav-next"><span class="icon icon-arrow-right"></span></button>
-    </div>
-    <div class="wrapper"><div class="el-calendar-table"></div></div>
+    </div></div>
+    <div class="b-overlay-wrap" aria-busy="false"><div class="wrapper"><div class="el-calendar-table"></div></div></div>
   </body></html>`);
 
   const table = document.querySelector(".el-calendar-table");
   const dates = document.getElementById("dates");
   const state = { todayClicks: 0 };
+  const tableOverlay = table.closest(".b-overlay-wrap");
 
   const render = (idx, headingDelay = 0, contentDelay = 0) => {
     const month = months[idx] ?? [];
-    const content = () => { table.innerHTML = month.map((l) => dayCell(l.day, l)).join(""); };
-    const heading = () => { dates.textContent = "M" + idx; };
+    const headerOverlay = dates.closest(".b-overlay-wrap");
+    headerOverlay.setAttribute("aria-busy", "true");
+    tableOverlay.setAttribute("aria-busy", "true");
+    const content = () => {
+      table.innerHTML = month.map((l) => dayCell(l.day, l)).join("");
+      tableOverlay.setAttribute("aria-busy", "false");
+    };
+    const heading = () => {
+      dates.textContent = "M" + idx;
+      headerOverlay.setAttribute("aria-busy", "false");
+    };
     if (headingDelay) setTimeout(heading, headingDelay);
     else heading();
     if (contentDelay) {
@@ -84,7 +92,6 @@ test("scrapes lessons across months and stops at the first empty month", async (
     occurrences.map((o) => o.name).sort(),
     ["Базы данных", "Сети"],
   );
-  // Restores the user's view by clicking "Сегодня" at start and at the end.
   assert.equal(state.todayClicks, 2);
 });
 
@@ -173,7 +180,7 @@ for (const keepPrevious of [false, true]) {
       [{ day: 16, name: "September", time: "10:00" }],
       [{ day: 1, name: "October", time: "11:00" }],
       [],
-    ], { lessonDelay: 4500, keepPrevious });
+    ], { lessonDelay: 12_500, keepPrevious });
 
     const result = await withMockTimers(t, () => scanSemester(() => {}));
     assert.equal(result.monthsScanned, 3);
@@ -221,4 +228,77 @@ test("rejects a missing calendar rather than treating it as an empty month", asy
 
   await assert.rejects(withMockTimers(t, () => scanSemester(() => {})), /загрузки/i);
   assert.equal(state.todayClicks, 2);
+});
+
+test("reads an already loaded empty month without advancing any timers", async (t) => {
+  globalThis.Date = FixedDate;
+  buildCalendar([[]]);
+  document.body.insertAdjacentHTML("beforeend", '<div class="b-overlay-wrap" aria-busy="true"></div>');
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const result = await scanSemester(() => {});
+  assert.equal(result.monthsScanned, 1);
+  assert.deepEqual(result.occurrences, []);
+});
+
+test("waits for busy state queued by the portal after a navigation click", async (t) => {
+  globalThis.Date = FixedDate;
+  buildCalendar([[{ day: 16, name: "September", time: "10:00" }], []]);
+  const table = document.querySelector(".el-calendar-table");
+  const overlay = table.closest(".b-overlay-wrap");
+  let loaded = false;
+  document.querySelector(".nav-next").addEventListener("click", () => {
+    queueMicrotask(() => {
+      overlay.setAttribute("aria-busy", "true");
+      setTimeout(() => {
+        loaded = true;
+        overlay.setAttribute("aria-busy", "false");
+      }, 1500);
+    });
+  });
+
+  await withMockTimers(t, () => scanSemester((month) => {
+    if (month === 2) assert.equal(loaded, true);
+  }));
+});
+
+test("rejects a loader that never finishes even when the month heading changes", async (t) => {
+  globalThis.Date = FixedDate;
+  const state = buildCalendar([[{ day: 16, name: "September", time: "10:00" }], []]);
+  document.querySelector(".nav-next").addEventListener("click", () => {
+    document.querySelector(".el-calendar-table").closest(".b-overlay-wrap")
+      .setAttribute("aria-busy", "true");
+  });
+
+  await assert.rejects(withMockTimers(t, () => scanSemester(() => {})), /загрузки/i);
+  assert.equal(state.todayClicks, 2);
+});
+
+test("waits when the month changes before the loader starts", async (t) => {
+  globalThis.Date = FixedDate;
+  buildCalendar([[{ day: 16, name: "September", time: "10:00" }]]);
+  const next = document.querySelector(".nav-next");
+  const replacement = next.cloneNode(true);
+  next.replaceWith(replacement);
+  const table = document.querySelector(".el-calendar-table");
+  const overlay = table.closest(".b-overlay-wrap");
+  let month = 0;
+  replacement.addEventListener("click", () => {
+    month++;
+    const headerOverlay = document.getElementById("dates").closest(".b-overlay-wrap");
+    headerOverlay.setAttribute("aria-busy", "true");
+    document.getElementById("dates").textContent = "M" + month;
+    headerOverlay.setAttribute("aria-busy", "false");
+    table.innerHTML = "";
+    setTimeout(() => overlay.setAttribute("aria-busy", "true"), 100);
+    setTimeout(() => {
+      table.innerHTML = month === 1 ? dayCell(1, { name: "October", time: "11:00" }) : "";
+      overlay.setAttribute("aria-busy", "false");
+    }, 2000);
+  });
+
+  const result = await withMockTimers(t, () => scanSemester(() => {}));
+  assert.equal(result.monthsScanned, 3);
+  assert.deepEqual(result.occurrences.map((o) => [o.name, o.date.getMonth()]), [
+    ["September", 8], ["October", 9],
+  ]);
 });

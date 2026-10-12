@@ -28,7 +28,7 @@ function headerHtml(view = "month") {
         <label class="btn${active("month")}"><input type="radio" value="month"><span>Месяц</span></label>
       </div></div>
     </div>
-    <div class="wrapper"><div class="el-calendar-table"></div></div>
+    <div class="b-overlay-wrap" aria-busy="false"><div class="wrapper"><div class="el-calendar-table"></div></div></div>
   </body></html>`;
 }
 
@@ -44,7 +44,9 @@ function setActiveView(view) {
 function setupCalendar(months) {
   const table = document.querySelector(".el-calendar-table");
   const dates = document.getElementById("dates");
+  const overlay = table.closest(".b-overlay-wrap");
   const render = (i) => {
+    overlay.setAttribute("aria-busy", "true");
     const month = months[i] ?? [];
     table.innerHTML = month
       .map(
@@ -57,6 +59,7 @@ function setupCalendar(months) {
       )
       .join("");
     dates.textContent = "M" + i;
+    overlay.setAttribute("aria-busy", "false");
   };
   let idx = 0;
   document.querySelector("button.btn-schedule").addEventListener("click", () => {

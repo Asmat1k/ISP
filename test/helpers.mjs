@@ -51,6 +51,7 @@ export function installDom(html = "<!doctype html><html><body></body></html>") {
   globalThis.window = dom.window;
   globalThis.document = dom.window.document;
   globalThis.Node = dom.window.Node;
+  globalThis.MutationObserver = dom.window.MutationObserver;
   globalThis.HTMLElement = dom.window.HTMLElement;
   return dom;
 }
