@@ -8,7 +8,12 @@ const RESPONSE_ERROR = "Некорректный ответ API расписан
 
 interface ScheduleResponse {
   code: number;
-  data: { date: string; lessons: { subject: string; time_start: string }[] }[];
+  data: { date: string; lessons: {
+    subject: string | null;
+    subject_id?: number | null;
+    group?: string | null;
+    time_start: string;
+  }[] }[];
 }
 
 function formatDate(date: Date): string {
@@ -48,11 +53,16 @@ function parseSchedule(payload: ScheduleResponse, start: Date, end: Date): Lesso
     if (date < start || date > end) continue;
 
     for (const lesson of day.lessons) {
-      if (!lesson || typeof lesson.subject !== "string" || !lesson.subject.trim()
+      if (!lesson || (lesson.subject !== null && typeof lesson.subject !== "string")
         || typeof lesson.time_start !== "string" || !isStartTime(lesson.time_start)) {
         throw new Error(RESPONSE_ERROR);
       }
-      occurrences.push({ date, name: lesson.subject.trim(), startTime: lesson.time_start });
+      const name = lesson.subject?.trim()
+        || (typeof lesson.group === "string" ? lesson.group.trim() : "")
+        || (typeof lesson.subject_id === "number" && Number.isSafeInteger(lesson.subject_id)
+          && lesson.subject_id > 0 ? `Предмет ${lesson.subject_id}` : "");
+      if (!name) throw new Error(RESPONSE_ERROR);
+      occurrences.push({ date, name, startTime: lesson.time_start });
     }
   }
   return occurrences;

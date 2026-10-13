@@ -40,6 +40,51 @@ test("includes both date boundaries and excludes lessons outside the requested r
   assert.deepEqual(result.occurrences.map(lesson => lesson.name), ["2026-09-15", "2027-02-15"]);
 });
 
+test("keeps lessons with null subjects using their group names", async (t) => {
+  mockSchedule(t, [
+    scheduleDay("2026-10-15", [{ ...apiLesson(null, "18:50"), subject_id: 60209, group: "ВРЭФ  1" }]),
+    scheduleDay("2026-10-16", [{ ...apiLesson(null, "18:50"), subject_id: 57979, group: "ПРВРЭС 1" }]),
+    scheduleDay("2026-10-19", [
+      { ...apiLesson(null, "17:10"), subject_id: 26432, group: "СВТиСУК (ВебТех) 1" },
+      { ...apiLesson(null, "18:50"), subject_id: 26432, group: "СВТиСУК (ВебТех) 1.1" },
+      { ...apiLesson(null, "20:30"), subject_id: 26432, group: "СВТиСУК (ВебТех) 1.1" },
+    ]),
+  ]);
+  const result = await scanSemester();
+  assert.deepEqual(result.occurrences, [
+    { date: new Date(2026, 9, 15), name: "ВРЭФ  1", startTime: "18:50" },
+    { date: new Date(2026, 9, 16), name: "ПРВРЭС 1", startTime: "18:50" },
+    { date: new Date(2026, 9, 19), name: "СВТиСУК (ВебТех) 1", startTime: "17:10" },
+    { date: new Date(2026, 9, 19), name: "СВТиСУК (ВебТех) 1.1", startTime: "18:50" },
+    { date: new Date(2026, 9, 19), name: "СВТиСУК (ВебТех) 1.1", startTime: "20:30" },
+  ]);
+});
+
+test("prefers subject names and falls back to group or subject ID for empty names", async (t) => {
+  mockSchedule(t, [scheduleDay("2026-10-15", [
+    { ...apiLesson(" Базы данных "), group: "Group" },
+    { ...apiLesson("  "), group: " Group " },
+    { ...apiLesson(null), group: null, subject_id: 60209 },
+    { ...apiLesson(""), group: " ", subject_id: 57979 },
+  ])]);
+  const result = await scanSemester();
+  assert.deepEqual(result.occurrences.map(lesson => lesson.name), [
+    "Базы данных", "Group", "Предмет 60209", "Предмет 57979",
+  ]);
+});
+
+test("rejects malformed lessons or lessons without any usable name", async (t) => {
+  for (const fields of [
+    { subject: 123 },
+    { subject: null, time_start: "25:00" },
+    ...[undefined, null, "60209", 0, -1, 1.5].map(subject_id =>
+      ({ subject: null, group: null, subject_id })),
+  ]) {
+    mockSchedule(t, [scheduleDay("2026-10-15", [{ ...apiLesson(), ...fields }])]);
+    await assert.rejects(scanSemester(), /Некорректный ответ API расписания/);
+  }
+});
+
 test("an empty range needs only one request", async (t) => {
   const fetch = mockSchedule(t, []);
   assert.deepEqual(await scanSemester(), {
