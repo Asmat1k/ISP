@@ -20,42 +20,42 @@ const VTIMEZONE = [
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-function fmtWall(d: Date): string {
+function formatLocalDateTime(date: Date): string {
   return (
-    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
-    `T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
   );
 }
 
-function fmtUtc(d: Date): string {
+function formatUtcDateTime(date: Date): string {
   return (
-    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
-    `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`
+    `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
+    `T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`
   );
 }
 
-function moscowWallToUtc(d: Date): Date {
+function moscowWallToUtc(date: Date): Date {
   return new Date(
     Date.UTC(
-      d.getFullYear(),
-      d.getMonth(),
-      d.getDate(),
-      d.getHours() - MOSCOW_OFFSET_HOURS,
-      d.getMinutes(),
-      d.getSeconds(),
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      date.getHours() - MOSCOW_OFFSET_HOURS,
+      date.getMinutes(),
+      date.getSeconds(),
     ),
   );
 }
 
 function atTime(day: Date, startTime: string): Date {
-  const [h, m] = startTime.split(":").map(Number);
-  const d = new Date(day);
-  d.setHours(h, m, 0, 0);
-  return d;
+  const [hours, minutes] = startTime.split(":").map(Number);
+  const date = new Date(day);
+  date.setHours(hours, minutes, 0, 0);
+  return date;
 }
 
-function escapeText(s: string): string {
-  return s
+function escapeText(text: string): string {
+  return text
     .replace(/\\/g, "\\\\")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,")
@@ -81,63 +81,63 @@ function foldLine(line: string): string {
 }
 
 function groupSeries(occurrences: LessonOccurrence[]): Series[] {
-  const map = new Map<string, Series>();
-  for (const o of occurrences) {
-    const weekday = o.date.getDay();
-    const key = `${o.name}||${weekday}||${o.startTime}`;
-    let s = map.get(key);
-    if (!s) {
-      s = { name: o.name, startTime: o.startTime, dates: [] };
-      map.set(key, s);
+  const seriesByKey = new Map<string, Series>();
+  for (const occurrence of occurrences) {
+    const weekday = occurrence.date.getDay();
+    const key = `${occurrence.name}||${weekday}||${occurrence.startTime}`;
+    let series = seriesByKey.get(key);
+    if (!series) {
+      series = { name: occurrence.name, startTime: occurrence.startTime, dates: [] };
+      seriesByKey.set(key, series);
     }
-    s.dates.push(o.date);
+    series.dates.push(occurrence.date);
   }
-  const series = [...map.values()];
-  for (const s of series) s.dates.sort((a, b) => a.getTime() - b.getTime());
-  return series;
+  const allSeries = [...seriesByKey.values()];
+  for (const series of allSeries) series.dates.sort((a, b) => a.getTime() - b.getTime());
+  return allSeries;
 }
 
 const DAY_MS = 86_400_000;
 
 function uniformIntervalDays(dates: Date[]): number | null {
   if (dates.length < 2) return null;
-  const first = Math.round((dates[1].getTime() - dates[0].getTime()) / DAY_MS);
-  if (first !== 7 && first !== 14) return null;
+  const intervalDays = Math.round((dates[1].getTime() - dates[0].getTime()) / DAY_MS);
+  if (intervalDays !== 7 && intervalDays !== 14) return null;
   for (let i = 2; i < dates.length; i++) {
     const gap = Math.round((dates[i].getTime() - dates[i - 1].getTime()) / DAY_MS);
-    if (gap !== first) return null;
+    if (gap !== intervalDays) return null;
   }
-  return first;
+  return intervalDays;
 }
 
-function buildEvent(s: Series, dtstamp: string): string {
-  const weekday = s.dates[0].getDay();
-  const uid = `itmo-${hashKey(`${s.name}|${weekday}|${s.startTime}`)}@itmo-schedule-export`;
-  const start = atTime(s.dates[0], s.startTime);
+function buildEvent(series: Series, timestamp: string): string {
+  const weekday = series.dates[0].getDay();
+  const uid = `itmo-${hashKey(`${series.name}|${weekday}|${series.startTime}`)}@itmo-schedule-export`;
+  const start = atTime(series.dates[0], series.startTime);
   const end = new Date(start.getTime() + LESSON_MINUTES * 60_000);
 
   const lines = [
     "BEGIN:VEVENT",
     `UID:${uid}`,
-    `DTSTAMP:${dtstamp}`,
-    `DTSTART;TZID=${TZID}:${fmtWall(start)}`,
-    `DTEND;TZID=${TZID}:${fmtWall(end)}`,
-    `SUMMARY:${escapeText(s.name)}`,
+    `DTSTAMP:${timestamp}`,
+    `DTSTART;TZID=${TZID}:${formatLocalDateTime(start)}`,
+    `DTEND;TZID=${TZID}:${formatLocalDateTime(end)}`,
+    `SUMMARY:${escapeText(series.name)}`,
   ];
 
-  if (s.dates.length > 1) {
-    const interval = uniformIntervalDays(s.dates);
+  if (series.dates.length > 1) {
+    const interval = uniformIntervalDays(series.dates);
     if (interval) {
-      const lastStart = atTime(s.dates[s.dates.length - 1], s.startTime);
+      const lastStart = atTime(series.dates[series.dates.length - 1], series.startTime);
       lines.push(
-        `RRULE:FREQ=WEEKLY;INTERVAL=${interval / 7};UNTIL=${fmtUtc(moscowWallToUtc(lastStart))}`,
+        `RRULE:FREQ=WEEKLY;INTERVAL=${interval / 7};UNTIL=${formatUtcDateTime(moscowWallToUtc(lastStart))}`,
       );
     } else {
-      const rdates = s.dates
+      const recurrenceDates = series.dates
         .slice(1)
-        .map((d) => fmtWall(atTime(d, s.startTime)))
+        .map((date) => formatLocalDateTime(atTime(date, series.startTime)))
         .join(",");
-      lines.push(`RDATE;TZID=${TZID}:${rdates}`);
+      lines.push(`RDATE;TZID=${TZID}:${recurrenceDates}`);
     }
   }
 
@@ -146,9 +146,9 @@ function buildEvent(s: Series, dtstamp: string): string {
 }
 
 export function buildIcs(occurrences: LessonOccurrence[]): string {
-  const dtstamp = fmtUtc(new Date());
+  const timestamp = formatUtcDateTime(new Date());
   const series = groupSeries(occurrences);
-  const events = series.map((s) => buildEvent(s, dtstamp));
+  const events = series.map((series) => buildEvent(series, timestamp));
 
   return [
     "BEGIN:VCALENDAR",

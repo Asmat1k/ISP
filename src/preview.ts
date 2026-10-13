@@ -1,19 +1,16 @@
-import type { LessonOccurrence, PreviewSummary } from "./types";
+import type { ScanResult, PreviewSummary } from "./types";
 
 const OVERLAY_ID = "itmo-ics-preview-overlay";
 
-export function summarize(
-  occurrences: LessonOccurrence[],
-  monthsScanned: number,
-): PreviewSummary {
+export function summarize({ occurrences, startDate, endDate }: ScanResult): PreviewSummary {
   const counts = new Map<string, number>();
-  for (const o of occurrences) {
-    counts.set(o.name, (counts.get(o.name) ?? 0) + 1);
+  for (const occurrence of occurrences) {
+    counts.set(occurrence.name, (counts.get(occurrence.name) ?? 0) + 1);
   }
   const subjects = [...counts.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => a.name.localeCompare(b.name, "ru"));
-  return { lessonCount: occurrences.length, monthsScanned, subjects };
+  return { lessonCount: occurrences.length, startDate, endDate, subjects };
 }
 
 export function showPreview(summary: PreviewSummary): Promise<boolean> {
@@ -53,7 +50,7 @@ export function showPreview(summary: PreviewSummary): Promise<boolean> {
     Object.assign(title.style, { fontWeight: "600", fontSize: "16px" });
 
     const meta = document.createElement("div");
-    meta.textContent = `Просканировано: ${summary.monthsScanned} мес.`;
+    meta.textContent = `Период: ${summary.startDate} — ${summary.endDate}`;
     Object.assign(meta.style, { color: "#888", fontSize: "13px" });
 
     const list = document.createElement("ul");
@@ -63,9 +60,9 @@ export function showPreview(summary: PreviewSummary): Promise<boolean> {
       listStyle: "none",
       overflowY: "auto",
     });
-    for (const s of summary.subjects) {
-      const li = document.createElement("li");
-      Object.assign(li.style, {
+    for (const subject of summary.subjects) {
+      const item = document.createElement("li");
+      Object.assign(item.style, {
         display: "flex",
         justifyContent: "space-between",
         gap: "12px",
@@ -74,12 +71,12 @@ export function showPreview(summary: PreviewSummary): Promise<boolean> {
         fontSize: "14px",
       });
       const name = document.createElement("span");
-      name.textContent = s.name;
+      name.textContent = subject.name;
       const count = document.createElement("span");
-      count.textContent = String(s.count);
+      count.textContent = String(subject.count);
       count.style.color = "#888";
-      li.append(name, count);
-      list.appendChild(li);
+      item.append(name, count);
+      list.appendChild(item);
     }
 
     const footer = document.createElement("div");
@@ -89,27 +86,27 @@ export function showPreview(summary: PreviewSummary): Promise<boolean> {
       gap: "8px",
     });
 
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "btn btn-default btn-sm";
-    cancelBtn.textContent = "Отмена";
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "btn btn-default btn-sm";
+    cancelButton.textContent = "Отмена";
 
-    const okBtn = document.createElement("button");
-    okBtn.type = "button";
-    okBtn.className = "btn btn-primary btn-sm";
-    okBtn.textContent = "Скачать .ics";
+    const downloadButton = document.createElement("button");
+    downloadButton.type = "button";
+    downloadButton.className = "btn btn-primary btn-sm";
+    downloadButton.textContent = "Скачать .ics";
 
     const close = (result: boolean) => {
       overlay.remove();
       resolve(result);
     };
-    cancelBtn.addEventListener("click", () => close(false));
-    okBtn.addEventListener("click", () => close(true));
+    cancelButton.addEventListener("click", () => close(false));
+    downloadButton.addEventListener("click", () => close(true));
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) close(false);
     });
 
-    footer.append(cancelBtn, okBtn);
+    footer.append(cancelButton, downloadButton);
     card.append(title, meta, list, footer);
     overlay.appendChild(card);
     document.body.appendChild(overlay);

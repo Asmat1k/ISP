@@ -1,4 +1,4 @@
-import { test, before, after, beforeEach } from "node:test";
+import { test, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadBundle,
@@ -7,9 +7,13 @@ import {
   previewOverlay,
   clickPreviewButton,
   waitFor,
+  mockSchedule,
+  scheduleDay,
+  apiLesson,
 } from "./helpers.mjs";
 
 const RealDate = globalThis.Date;
+const RealBlob = globalThis.Blob;
 const realSetInterval = globalThis.setInterval;
 const realSetTimeout = globalThis.setTimeout;
 
@@ -40,38 +44,6 @@ function setActiveView(view) {
   }
 }
 
-// Wires month navigation onto the header so scanSemester can drive a real scan.
-function setupCalendar(months) {
-  const table = document.querySelector(".el-calendar-table");
-  const dates = document.getElementById("dates");
-  const overlay = table.closest(".b-overlay-wrap");
-  const render = (i) => {
-    overlay.setAttribute("aria-busy", "true");
-    const month = months[i] ?? [];
-    table.innerHTML = month
-      .map(
-        (l) => `<div class="day-cell"><div class="el-calendar-cell-content">
-          <div class="cell-date"><div>${l.day}</div></div>
-          <div><div><div id="lesson-${l.day}" class="el-calendar-month-item">
-            <div class="item-name">${l.name}</div>
-            <div class="item-time">${l.time}</div>
-          </div></div></div></div></div>`,
-      )
-      .join("");
-    dates.textContent = "M" + i;
-    overlay.setAttribute("aria-busy", "false");
-  };
-  let idx = 0;
-  document.querySelector("button.btn-schedule").addEventListener("click", () => {
-    idx = 0;
-    render(0);
-  });
-  document.querySelector(".nav-next").addEventListener("click", () => {
-    idx++;
-    render(idx);
-  });
-}
-
 function recordTimers() {
   globalThis.setTimeout = (fn, ms, ...rest) => {
     const id = realSetTimeout(fn, ms, ...rest);
@@ -94,6 +66,11 @@ beforeEach(() => {
   installDom(headerHtml());
 });
 
+afterEach(() => {
+  globalThis.Date = RealDate;
+  globalThis.Blob = RealBlob;
+});
+
 after(() => {
   globalThis.Date = RealDate;
   globalThis.setTimeout = realSetTimeout;
@@ -107,7 +84,7 @@ test("injects the export button next to the Неделя/Месяц toggle", () 
   const btn = exportBtn();
   assert.ok(btn);
   assert.equal(btn.textContent, "Экспорт");
-  assert.match(btn.className, /btn-primary/);
+  assert.ok(btn.className.includes("btn-primary"));
   assert.equal(btn.parentElement, document.getElementById("btn-radios-1").parentElement);
 });
 
@@ -132,12 +109,12 @@ test("does nothing when the toggle is absent", () => {
   assert.equal(exportBtn(), null);
 });
 
-test("in week view the button is disabled and shows a hint", () => {
+test("in week view the button also permits API export", () => {
   installDom(headerHtml("week"));
   ensureButton();
   const btn = exportBtn();
-  assert.equal(btn.disabled, true);
-  assert.equal(btn.textContent, "Доступно в виде «Месяц»");
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.textContent, "Экспорт");
 });
 
 test("in month view the button is enabled and invites export", () => {
@@ -148,10 +125,10 @@ test("in month view the button is enabled and invites export", () => {
   assert.equal(btn.textContent, "Экспорт");
 });
 
-test("switching from week to month re-enables the button", () => {
+test("switching views keeps the button enabled", () => {
   installDom(headerHtml("week"));
   ensureButton();
-  assert.equal(exportBtn().disabled, true);
+  assert.equal(exportBtn().disabled, false);
 
   setActiveView("month");
   ensureButton();
@@ -159,7 +136,13 @@ test("switching from week to month re-enables the button", () => {
   assert.equal(exportBtn().textContent, "Экспорт");
 });
 
-test("clicking export scans the schedule and downloads a valid .ics", async () => {
+test("export in week view loads the API and downloads only after confirmation", async (t) => {
+  installDom(headerHtml("week"));
+  document.querySelector(".el-calendar-table").remove();
+  const todayClick = t.mock.fn();
+  const nextClick = t.mock.fn();
+  document.querySelector("button.btn-schedule").addEventListener("click", todayClick);
+  document.querySelector(".nav-next").addEventListener("click", nextClick);
   globalThis.Date = FixedDate;
   recordTimers();
 
@@ -169,27 +152,24 @@ test("clicking export scans the schedule and downloads a valid .ics", async () =
       this.parts = parts;
     }
   };
-  globalThis.URL = {
-    createObjectURL: (blob) => {
-      downloaded = blob.parts.join("");
-      return "blob:fake";
-    },
-    revokeObjectURL: () => {},
-  };
+  t.mock.method(URL, "createObjectURL", (blob) => {
+    downloaded = blob.parts.join("");
+    return "blob:fake";
+  });
+  t.mock.method(URL, "revokeObjectURL", () => {});
 
-  setupCalendar([
-    [{ day: 16, name: "Базы данных", time: "18:50" }],
-    [{ day: 1, name: "Сети", time: "12:00" }],
-    [],
+  const fetch = mockSchedule(t, [
+    scheduleDay("2026-09-16", [apiLesson("Базы данных", "18:50")]),
+    scheduleDay("2026-10-01", [apiLesson("Сети", "12:00")]),
   ]);
 
   ensureButton();
   exportBtn().click();
 
   await waitFor(() => previewOverlay(), { timeout: 15_000 });
-  assert.ok(previewOverlay(), "a preview modal appeared after scanning");
-  assert.match(previewOverlay().textContent, /Нашёл 2 занятий, 2 предметов/);
-  assert.match(previewOverlay().textContent, /Просканировано: 3 мес\./);
+  assert.ok(previewOverlay(), "a preview modal appeared after loading");
+  assert.ok(previewOverlay().textContent.includes("Нашёл 2 занятий, 2 предметов"));
+  assert.ok(previewOverlay().textContent.includes("Период: 2026-09-15 — 2027-02-15"));
   assert.equal(downloaded, null, "nothing downloads before confirming");
 
   clickPreviewButton("Скачать .ics");
@@ -197,14 +177,18 @@ test("clicking export scans the schedule and downloads a valid .ics", async () =
   await waitFor(() => downloaded !== null);
 
   assert.ok(downloaded, "an .ics file was produced");
-  assert.match(downloaded, /BEGIN:VCALENDAR/);
-  assert.match(downloaded, /SUMMARY:Базы данных/);
-  assert.match(downloaded, /SUMMARY:Сети/);
-  assert.equal((downloaded.match(/BEGIN:VEVENT/g) || []).length, 2);
+  assert.ok(downloaded.includes("BEGIN:VCALENDAR"));
+  assert.ok(downloaded.includes("SUMMARY:Базы данных"));
+  assert.ok(downloaded.includes("SUMMARY:Сети"));
+  assert.equal(downloaded.split("BEGIN:VEVENT").length - 1, 2);
   assert.equal(previewOverlay(), null, "modal closes after confirming");
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(exportBtn().textContent, "Готово: 2 занятий");
+  assert.equal(todayClick.mock.callCount(), 0);
+  assert.equal(nextClick.mock.callCount(), 0);
 });
 
-test("cancelling the preview aborts the export without downloading", async () => {
+test("cancelling the preview aborts the export without downloading", async (t) => {
   globalThis.Date = FixedDate;
   recordTimers();
 
@@ -214,15 +198,13 @@ test("cancelling the preview aborts the export without downloading", async () =>
       this.parts = parts;
     }
   };
-  globalThis.URL = {
-    createObjectURL: (blob) => {
-      downloaded = blob.parts.join("");
-      return "blob:fake";
-    },
-    revokeObjectURL: () => {},
-  };
+  t.mock.method(URL, "createObjectURL", (blob) => {
+    downloaded = blob.parts.join("");
+    return "blob:fake";
+  });
+  t.mock.method(URL, "revokeObjectURL", () => {});
 
-  setupCalendar([[{ day: 16, name: "Базы данных", time: "18:50" }], []]);
+  mockSchedule(t, [scheduleDay("2026-09-16", [apiLesson("Базы данных", "18:50")])]);
 
   ensureButton();
   exportBtn().click();
@@ -237,7 +219,7 @@ test("cancelling the preview aborts the export without downloading", async () =>
   assert.equal(exportBtn().textContent, "Экспорт отменён");
 });
 
-test("on failure it logs DOM diagnostics to the console", async () => {
+test("on failure it reports the error without obsolete DOM diagnostics", async (t) => {
   globalThis.Date = FixedDate;
   recordTimers();
 
@@ -246,19 +228,17 @@ test("on failure it logs DOM diagnostics to the console", async () => {
       this.parts = parts;
     }
   };
-  globalThis.URL = {
-    createObjectURL: () => {
-      throw new Error("boom");
-    },
-    revokeObjectURL: () => {},
-  };
+  t.mock.method(URL, "createObjectURL", () => {
+    throw new Error("boom");
+  });
+  t.mock.method(URL, "revokeObjectURL", () => {});
 
   const realError = console.error;
   const calls = [];
   console.error = (...args) => calls.push(args);
 
   try {
-    setupCalendar([[{ day: 16, name: "Будущая пара", time: "10:00" }], []]);
+    mockSchedule(t, [scheduleDay("2026-09-16", [apiLesson("Будущая пара", "10:00")])]);
 
     ensureButton();
     exportBtn().click();
@@ -273,14 +253,53 @@ test("on failure it logs DOM diagnostics to the console", async () => {
       calls.some((args) => String(args[0]).startsWith("[ITMO export]")),
       "logs a prefixed error line",
     );
-    const dump = calls
-      .map((args) => args[1])
-      .find((a) => a && typeof a === "object" && "headerSwitch" in a);
-    assert.ok(dump, "logs a diagnostics object");
-    assert.equal(dump.view, "month");
-    assert.equal(dump.lessonsInView, 1); // view restored to current month before the throw
-    assert.equal(dump.toggle, true);
+    assert.ok(exportBtn().title.includes("boom"));
   } finally {
     console.error = realError;
   }
 });
+
+for (const action of ["Скачать .ics", "Отмена", "empty"]) {
+  test(`logs export actions without private data: ${action}`, async (t) => {
+    globalThis.Date = FixedDate;
+    recordTimers();
+    const info = t.mock.method(console, "info", () => {});
+    t.mock.method(URL, "createObjectURL", () => "blob:fake");
+    t.mock.method(URL, "revokeObjectURL", () => {});
+    t.mock.method(window.HTMLAnchorElement.prototype, "click", () => {});
+    mockSchedule(t, action === "empty" ? [] : [
+      scheduleDay("2026-09-16", [apiLesson("Private subject")]),
+    ]);
+    window.localStorage.setItem("auth._token.itmoId", "Bearer private-token");
+
+    ensureButton();
+    ensureButton();
+    exportBtn().click();
+    if (action !== "empty") {
+      assert.ok(await waitFor(() => previewOverlay()));
+      clickPreviewButton(action);
+    }
+    assert.ok(await waitFor(() => !exportBtn().textContent.startsWith("Загрузка")));
+
+    const messages = info.mock.calls.map(({ arguments: args }) => args[0]);
+    assert.equal(messages.filter(message => message === "[ITMO export] Кнопка экспорта добавлена").length, 1);
+    assert.ok(messages.includes("[ITMO export] Экспорт начат"));
+    assert.ok(messages.includes("[ITMO export] Загрузка расписания"));
+    assert.ok(messages.includes("[ITMO export] Расписание загружено"));
+    if (action === "empty") {
+      assert.ok(messages.includes("[ITMO export] Занятия не найдены"));
+      assert.equal(messages.includes("[ITMO export] Предпросмотр открыт"), false);
+    } else {
+      assert.ok(messages.includes("[ITMO export] Предпросмотр открыт"));
+      const outcome = action === "Отмена" ? "Экспорт отменён" : "Скачивание .ics запущено";
+      assert.equal(messages.at(-1), `[ITMO export] ${outcome}`);
+    }
+    if (action !== "Скачать .ics") {
+      assert.equal(messages.includes("[ITMO export] Скачивание .ics запущено"), false);
+    }
+    const logs = JSON.stringify(info.mock.calls.map(call => call.arguments));
+    for (const privateValue of ["private-token", "Private subject", "Authorization", "time_start"]) {
+      assert.equal(logs.includes(privateValue), false);
+    }
+  });
+}

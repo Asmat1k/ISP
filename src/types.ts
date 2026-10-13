@@ -12,11 +12,13 @@ export interface Series {
 
 export interface ScanResult {
   occurrences: LessonOccurrence[];
-  monthsScanned: number;
+  startDate: string;
+  endDate: string;
 }
 
 export interface PreviewSummary {
   lessonCount: number;
-  monthsScanned: number;
+  startDate: string;
+  endDate: string;
   subjects: { name: string; count: number }[];
 }

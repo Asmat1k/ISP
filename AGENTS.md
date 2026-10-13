@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A Chrome extension (Manifest V3), named **ISP (Itmo Schedule Parser)**, that
-scrapes the schedule page in the ITMO student portal (`my.itmo.ru`) and exports
-it as an `.ics` file for import into Google Calendar. There is no backend and no
-API — everything runs as one content script that reads the rendered DOM. UI
+fetches the personal schedule API in the ITMO student portal (`my.itmo.ru`) and
+exports it as an `.ics` file for import into Google Calendar. There is no backend;
+everything runs as one content script. DOM access is only needed for the UI. UI
 strings are in Russian; see [README.md](README.md) for end-user instructions.
 
 ## Commands
@@ -28,28 +28,30 @@ mode → Load unpacked. The version lives in both `package.json` and
 ## Architecture
 
 Content script `src/content.ts` orchestrates the rest; the flow is
-scan → preview → build. Modules in `src/` (`types.ts` holds shared interfaces):
+fetch → preview → build. Modules in `src/` (`types.ts` holds shared interfaces):
 
 - **[src/content.ts](src/content.ts)** — entry point declared in the manifest.
   Injects the "Экспорт" button next to the calendar's
   Week/Month toggle, re-adding it every 1s via `setInterval(ensureButton)`
-  because the SPA re-renders. Disabled in Week view (export only works in Month
-  view). On click: `scanSemester` → `showPreview(summarize(...))` → and only if
+  because the SPA re-renders. Works in both Week and Month views.
+  On click: `scanSemester` → `showPreview(summarize(...))` → and only if
   the user confirms, builds the `.ics` and triggers a Blob download.
-  `logDiagnostics` dumps DOM selector presence to the console on failure — the
-  scraper depends on ITMO's markup, so this is the first place to look when
-  export breaks.
+  Errors are logged without tokens or response bodies; the button title carries
+  the error message.
 
-- **[src/scanner.ts](src/scanner.ts)** — `scanSemester` walks the calendar
-  forward month by month: clicks "Сегодня" to reset, scrapes lessons from the
-  DOM (`[id^="lesson-"]` cells, skipping greyed-out adjacent-month days via the
-  `text-gray-40` class), clicks the next-month arrow, and waits for the `#dates`
-  label to change (`waitForMonthChange`). Stops at the first empty month or
-  `maxMonths` (10). Filters to occurrences from today onward.
+- **[src/scanner.ts](src/scanner.ts)** — `scanSemester` fetches one date range
+  from `https://my.itmo.ru/api/schedule/schedule/personal` using `date_start`
+  and `date_end`. Reads `auth._token.itmoId` from the page's localStorage for
+  each request; never stores tokens or refreshes them. Validates the response,
+  handles HTTP/auth errors, and aborts requests after 30 seconds. One request
+  covers today through five calendar months ahead (hardcoded `MONTHS_AHEAD`),
+  clamping to the target month’s last day when needed. Returns occurrences
+  within the inclusive range plus `startDate`/`endDate` for the preview.
+  Never navigates the calendar or reads lesson DOM elements.
 
 - **[src/preview.ts](src/preview.ts)** — `summarize` (pure: counts lessons,
-  carries `monthsScanned`, groups occurrences by subject) feeds `showPreview`,
-  which renders a confirmation modal (counts + scanned months + subject list)
+  carries `startDate`/`endDate`, groups occurrences by subject) feeds `showPreview`,
+  which renders a confirmation modal (counts + requested date range + subject list)
   and returns a `Promise<boolean>` — `true` on "Скачать .ics", `false` on
   "Отмена" or backdrop click. Nothing downloads until this resolves true.
 
@@ -66,12 +68,11 @@ scan → preview → build. Modules in `src/` (`types.ts` holds shared interface
 
 ### Key constraints from the data source
 
-The ITMO DOM exposes only **subject name and start time** — no instructor,
-room, or end time. Lesson duration is therefore hardcoded as
-`LESSON_MINUTES = 90` in [src/ics.ts](src/ics.ts). Moscow is treated as a fixed
-+03:00 offset (no DST). When the scraper breaks, it is almost always because
-ITMO changed a class name or DOM structure that `scanner.ts`/`content.ts`
-query — update the selectors there.
+The API exposes date, subject, start/end times and additional lesson details.
+This migration maps only date, subject and start time to `LessonOccurrence`;
+ICS behavior stays unchanged, including `LESSON_MINUTES = 90` in
+[src/ics.ts](src/ics.ts). Moscow is treated as a fixed +03:00 offset (no DST).
+Only button placement depends on ITMO's DOM structure in `content.ts`.
 
 ## Testing notes
 
@@ -82,8 +83,8 @@ transpile) is required because the modules import each other (e.g. `ics.ts`
 imports `utils.ts`). `helpers.mjs` is the shared toolbox: `installDom`,
 `FixedDate` (pins "now" to 2026-09-15 for deterministic dates), `waitFor`, and
 the preview-modal helpers `previewOverlay` / `clickPreviewButton`. The
-`scanner`/`content` tests build fake ITMO calendar markup to exercise scraping
-without the live site. Put reusable test helpers in `helpers.mjs`, not inline.
+`scanner`/`content` tests mock API responses via `mockSchedule`, `scheduleDay`
+and `apiLesson`; content tests use fake toolbar markup. No live site is needed. Put reusable test helpers in `helpers.mjs`, not inline.
 
 ## Behavioral Guidelines
 

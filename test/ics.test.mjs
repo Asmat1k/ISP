@@ -26,29 +26,33 @@ const single = [occ("2026-09-05", "Разовая пара", "20:30")];
 const ics = buildIcs([...weekly, ...biweekly, ...irregular, ...single]);
 
 test("weekly series → RRULE INTERVAL=1, UNTIL in UTC (Moscow 17:10 → 14:10Z)", () => {
-  assert.match(ics, /FREQ=WEEKLY;INTERVAL=1;UNTIL=20260922T141000Z/);
+  assert.ok(ics.includes("FREQ=WEEKLY;INTERVAL=1;UNTIL=20260922T141000Z"));
 });
 
 test("biweekly series → RRULE INTERVAL=2, UNTIL in UTC (Moscow 18:50 → 15:50Z)", () => {
-  assert.match(ics, /FREQ=WEEKLY;INTERVAL=2;UNTIL=20261001T155000Z/);
+  assert.ok(ics.includes("FREQ=WEEKLY;INTERVAL=2;UNTIL=20261001T155000Z"));
 });
 
 test("irregular series → RDATE with TZID, no RRULE", () => {
-  assert.match(ics, /RDATE;TZID=Europe\/Moscow:20260911T153000,20261002T153000/);
+  assert.ok(ics.includes("RDATE;TZID=Europe/Moscow:20260911T153000,20261002T153000"));
 });
 
 test("single occurrence → no recurrence rule", () => {
   const block = ics.split("Разовая")[1].split("END:VEVENT")[0];
-  assert.doesNotMatch(block, /RRULE|RDATE/);
+  assert.equal(block.includes("RRULE"), false);
+  assert.equal(block.includes("RDATE"), false);
 });
 
 test("events carry an explicit Europe/Moscow timezone", () => {
-  assert.match(ics, /BEGIN:VTIMEZONE[\s\S]*TZID:Europe\/Moscow[\s\S]*END:VTIMEZONE/);
-  assert.match(ics, /DTSTART;TZID=Europe\/Moscow:20260901T171000/);
+  const timezoneStart = ics.indexOf("BEGIN:VTIMEZONE");
+  const timezoneId = ics.indexOf("TZID:Europe/Moscow", timezoneStart);
+  const timezoneEnd = ics.indexOf("END:VTIMEZONE", timezoneId);
+  assert.ok(timezoneStart >= 0 && timezoneId > timezoneStart && timezoneEnd > timezoneId);
+  assert.ok(ics.includes("DTSTART;TZID=Europe/Moscow:20260901T171000"));
 });
 
 test("four VEVENTs are emitted", () => {
-  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 4);
+  assert.equal(ics.split("BEGIN:VEVENT").length - 1, 4);
 });
 
 test("long Russian SUMMARY is folded under 75 octets", () => {
@@ -62,6 +66,9 @@ test("calendar uses CRLF line endings", () => {
 test("UID is deterministic and order-independent (no duplicates on re-import)", () => {
   const a = buildIcs([...weekly, ...biweekly]);
   const b = buildIcs([...biweekly, ...weekly]); // reversed input order
-  const uids = (s) => [...s.matchAll(/UID:(.+)/g)].map((m) => m[1].trim()).sort();
+  const uids = (calendar) => calendar.split("\r\n")
+    .filter((line) => line.startsWith("UID:"))
+    .map((line) => line.slice(4).trim())
+    .sort();
   assert.deepEqual(uids(a), uids(b));
 });

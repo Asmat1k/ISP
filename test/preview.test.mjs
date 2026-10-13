@@ -15,13 +15,15 @@ const occ = (name) => ({
   startTime: "10:00",
 });
 
-test("summarize counts lessons, scanned months, and groups subjects by name", () => {
-  const summary = summarize(
-    [occ("Физика"), occ("Алгебра"), occ("Физика"), occ("Физика")],
-    5,
-  );
+test("summarize counts lessons, the date range, and groups subjects by name", () => {
+  const summary = summarize({
+    occurrences: [occ("Физика"), occ("Алгебра"), occ("Физика"), occ("Физика")],
+    startDate: "2026-09-15",
+    endDate: "2027-02-15",
+  });
   assert.equal(summary.lessonCount, 4);
-  assert.equal(summary.monthsScanned, 5);
+  assert.equal(summary.startDate, "2026-09-15");
+  assert.equal(summary.endDate, "2027-02-15");
   assert.deepEqual(summary.subjects, [
     { name: "Алгебра", count: 1 },
     { name: "Физика", count: 3 },
@@ -29,18 +31,20 @@ test("summarize counts lessons, scanned months, and groups subjects by name", ()
 });
 
 test("summarize on an empty list reports nothing", () => {
-  assert.deepEqual(summarize([], 1), {
+  assert.deepEqual(summarize({ occurrences: [], startDate: "2026-09-15", endDate: "2027-02-15" }), {
     lessonCount: 0,
-    monthsScanned: 1,
+    startDate: "2026-09-15",
+    endDate: "2027-02-15",
     subjects: [],
   });
 });
 
-test("showPreview renders the headline, scanned months, and a per-subject list", () => {
+test("showPreview renders the headline, the date range, and a per-subject list", () => {
   installDom();
   showPreview({
     lessonCount: 4,
-    monthsScanned: 5,
+    startDate: "2026-09-15",
+    endDate: "2027-02-15",
     subjects: [
       { name: "Алгебра", count: 1 },
       { name: "Физика", count: 3 },
@@ -48,19 +52,20 @@ test("showPreview renders the headline, scanned months, and a per-subject list",
   });
   const overlay = previewOverlay();
   assert.ok(overlay);
-  assert.match(overlay.textContent, /Нашёл 4 занятий, 2 предметов/);
-  assert.match(overlay.textContent, /Просканировано: 5 мес\./);
+  assert.ok(overlay.textContent.includes("Нашёл 4 занятий, 2 предметов"));
+  assert.ok(overlay.textContent.includes("Период: 2026-09-15 — 2027-02-15"));
   const items = overlay.querySelectorAll("li");
   assert.equal(items.length, 2);
-  assert.match(items[0].textContent, /Алгебра/);
-  assert.match(items[1].textContent, /Физика/);
+  assert.ok(items[0].textContent.includes("Алгебра"));
+  assert.ok(items[1].textContent.includes("Физика"));
 });
 
 test("confirming resolves true and removes the modal", async () => {
   installDom();
   const p = showPreview({
     lessonCount: 1,
-    monthsScanned: 1,
+    startDate: "2026-09-15",
+    endDate: "2027-02-15",
     subjects: [{ name: "X", count: 1 }],
   });
   clickPreviewButton("Скачать .ics");
@@ -72,7 +77,8 @@ test("cancelling resolves false and removes the modal", async () => {
   installDom();
   const p = showPreview({
     lessonCount: 1,
-    monthsScanned: 1,
+    startDate: "2026-09-15",
+    endDate: "2027-02-15",
     subjects: [{ name: "X", count: 1 }],
   });
   clickPreviewButton("Отмена");
