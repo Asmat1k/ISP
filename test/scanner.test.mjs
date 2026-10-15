@@ -85,6 +85,18 @@ test("rejects malformed lessons or lessons without any usable name", async (t) =
   }
 });
 
+test("rejects malformed optional fields even when a subject name is present", async (t) => {
+  for (const fields of [
+    { group: 42 },
+    { subject_id: "456" },
+    { subject_id: -1 },
+    { subject_id: 1.5 },
+  ]) {
+    mockSchedule(t, [scheduleDay("2026-10-15", [{ ...apiLesson(), ...fields }])]);
+    await assert.rejects(scanSemester(), /Некорректный ответ API расписания/);
+  }
+});
+
 test("an empty range needs only one request", async (t) => {
   const fetch = mockSchedule(t, []);
   assert.deepEqual(await scanSemester(), {

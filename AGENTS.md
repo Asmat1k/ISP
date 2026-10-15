@@ -39,12 +39,14 @@ fetch → preview → build. Modules in `src/` (`types.ts` holds shared interfac
   Errors are logged without tokens or response bodies; the button title carries
   the error message.
 
-- **[src/scanner.ts](src/scanner.ts)** — `scanSemester` fetches one date range
-  from `https://my.itmo.ru/api/schedule/schedule/personal` using `date_start`
-  and `date_end`. Reads `auth._token.itmoId` from the page's localStorage for
-  each request; never stores tokens or refreshes them. Validates the response,
-  handles HTTP/auth errors, and aborts requests after 30 seconds. One request
-  covers today through five calendar months ahead (hardcoded `MONTHS_AHEAD`),
+- **[src/request.ts](src/request.ts)** — the single API request utility. It reads
+  `auth._token.itmoId` for each request, validates authorization and date inputs
+  with Zod, fetches the personal schedule API, and validates its response with
+  Zod. It handles HTTP/auth errors and aborts requests after 30 seconds. Tokens
+  and response bodies are never logged or stored.
+
+- **[src/scanner.ts](src/scanner.ts)** — `scanSemester` requests one date range
+  covering today through five calendar months ahead (hardcoded `MONTHS_AHEAD`),
   clamping to the target month’s last day when needed. Returns occurrences
   within the inclusive range plus `startDate`/`endDate` for the preview.
   Never navigates the calendar or reads lesson DOM elements.
